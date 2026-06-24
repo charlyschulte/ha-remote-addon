@@ -19,6 +19,7 @@ The tunnel endpoints are fixed for the hosted service:
 
 - Pairs with the dashboard API
 - Obtains a signed tunnel token
+- Deletes the saved tunnel token and re-pairs when the configured pairing code changes
 - Opens a persistent websocket tunnel to edge proxy
 - Forwards HTTP and WebSocket requests to local Home Assistant
 - Strips forwarded proxy headers before local HA requests

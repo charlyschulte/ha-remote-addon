@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,8 +23,9 @@ import (
 )
 
 type pairResponse struct {
-	TunnelToken string `json:"tunnelToken"`
-	ConnectURL  string `json:"connectUrl"`
+	TunnelToken     string `json:"tunnelToken"`
+	ConnectURL      string `json:"connectUrl"`
+	PairingCodeHash string `json:"pairingCodeHash,omitempty"`
 }
 
 type tunnelMessage struct {
@@ -195,10 +198,30 @@ func main() {
 }
 
 func initialPairResponse(tokenFile, pairAPI, pairingCode string) (*pairResponse, error) {
-	if strings.TrimSpace(pairingCode) != "" {
+	pairingHash := pairingCodeHash(pairingCode)
+	if pairingHash != "" {
+		saved, err := loadPairResponse(tokenFile)
+		if err == nil && saved.PairingCodeHash != "" && saved.PairingCodeHash != pairingHash {
+			infof("pairing code changed; deleting saved tunnel token")
+			if removeErr := os.Remove(tokenFile); removeErr != nil && !os.IsNotExist(removeErr) {
+				fmt.Fprintf(os.Stderr, "unable to delete saved tunnel token: %v\n", removeErr)
+			}
+		} else if err == nil && saved.PairingCodeHash == pairingHash && strings.TrimSpace(saved.TunnelToken) != "" {
+			fmt.Fprintf(os.Stderr, "using saved tunnel token from %s\n", tokenFile)
+			return saved, nil
+		} else if err == nil && saved.PairingCodeHash == "" {
+			infof("saved tunnel token has no pairing code metadata; pairing with configured code")
+			if removeErr := os.Remove(tokenFile); removeErr != nil && !os.IsNotExist(removeErr) {
+				fmt.Fprintf(os.Stderr, "unable to delete saved tunnel token: %v\n", removeErr)
+			}
+		} else if err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "unable to read saved tunnel token: %v\n", err)
+		}
+
 		fmt.Fprintf(os.Stderr, "pairing with %s\n", pairAPI)
 		resp, err := pair(pairAPI, pairingCode)
 		if err == nil {
+			resp.PairingCodeHash = pairingHash
 			if saveErr := savePairResponse(tokenFile, resp); saveErr != nil {
 				fmt.Fprintf(os.Stderr, "unable to save tunnel token: %v\n", saveErr)
 			}
@@ -206,6 +229,7 @@ func initialPairResponse(tokenFile, pairAPI, pairingCode string) (*pairResponse,
 			return resp, nil
 		}
 		fmt.Fprintf(os.Stderr, "pairing failed: %v\n", err)
+		return nil, nil
 	}
 
 	resp, err := loadPairResponse(tokenFile)
@@ -217,6 +241,15 @@ func initialPairResponse(tokenFile, pairAPI, pairingCode string) (*pairResponse,
 		return nil, fmt.Errorf("unable to read saved tunnel token: %v", err)
 	}
 	return nil, nil
+}
+
+func pairingCodeHash(pairingCode string) string {
+	normalized := strings.TrimSpace(strings.ToUpper(pairingCode))
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
 }
 
 func loadPairResponse(path string) (*pairResponse, error) {
