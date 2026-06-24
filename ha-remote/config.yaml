@@ -1,5 +1,5 @@
 name: HA Remote
-version: "0.1.0"
+version: "0.1.1"
 slug: ha_remote
 description: Secure outbound tunnel agent for Home Assistant remote access
 startup: services
@@ -13,5 +13,7 @@ arch:
   - armv7
 options:
   pairing_code: ""
+  log_level: "info"
 schema:
   pairing_code: str
+  log_level: list(trace|debug|info|warning|error)

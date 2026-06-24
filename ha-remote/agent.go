@@ -60,6 +60,18 @@ type upstreamWebSocket struct {
 	writeMu sync.Mutex
 }
 
+type logLevel int
+
+const (
+	logLevelError logLevel = iota
+	logLevelWarning
+	logLevelInfo
+	logLevelDebug
+	logLevelTrace
+)
+
+var currentLogLevel = logLevelInfo
+
 var strippedHeaders = map[string]struct{}{
 	"x-forwarded-for":   {},
 	"x-forwarded-host":  {},
@@ -70,13 +82,74 @@ var strippedHeaders = map[string]struct{}{
 	"true-client-ip":    {},
 }
 
+func parseLogLevel(value string) logLevel {
+	switch normalizeLogLevel(value) {
+	case "trace":
+		return logLevelTrace
+	case "debug":
+		return logLevelDebug
+	case "warning", "warn":
+		return logLevelWarning
+	case "error":
+		return logLevelError
+	default:
+		return logLevelInfo
+	}
+}
+
+func normalizeLogLevel(value string) string {
+	level := strings.TrimSpace(strings.ToLower(value))
+	if level == "" {
+		return "info"
+	}
+	if level == "warn" {
+		return "warning"
+	}
+	return level
+}
+
+func logf(level logLevel, label, format string, args ...any) {
+	if currentLogLevel < level {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[%s] %s\n", label, fmt.Sprintf(format, args...))
+}
+
+func infof(format string, args ...any) {
+	logf(logLevelInfo, "info", format, args...)
+}
+
+func debugf(format string, args ...any) {
+	logf(logLevelDebug, "debug", format, args...)
+}
+
+func tracef(format string, args ...any) {
+	logf(logLevelTrace, "trace", format, args...)
+}
+
+func redactURLToken(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	query := parsed.Query()
+	if query.Has("token") {
+		query.Set("token", "redacted")
+		parsed.RawQuery = query.Encode()
+	}
+	return parsed.String()
+}
+
 func main() {
 	pairingCode := flag.String("pairing-code", "", "Pairing code from dashboard")
 	edgeURL := flag.String("edge-url", "https://api.home.ctech.media", "Edge base URL")
 	pairAPI := flag.String("pair-api", "https://home.ctech.media/api/agent/pair", "Pair endpoint URL")
 	haBase := flag.String("ha-base-url", "http://homeassistant:8123", "Local Home Assistant base URL")
+	logLevelFlag := flag.String("log-level", "info", "Log level: trace, debug, info, warning, error")
 	tokenFile := flag.String("token-file", "/data/tunnel-token.json", "Persisted tunnel token file")
 	flag.Parse()
+	currentLogLevel = parseLogLevel(*logLevelFlag)
+	infof("log level set to %s", normalizeLogLevel(*logLevelFlag))
 
 	if strings.TrimSpace(*edgeURL) == "" {
 		fmt.Fprintln(os.Stderr, "edge-url is required")
@@ -87,11 +160,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	resp, err := loadPairResponse(*tokenFile)
-	if err == nil && strings.TrimSpace(resp.TunnelToken) != "" {
-		fmt.Fprintf(os.Stderr, "using saved tunnel token from %s\n", *tokenFile)
-	} else if err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "unable to read saved tunnel token: %v\n", err)
+	resp, err := initialPairResponse(*tokenFile, *pairAPI, *pairingCode)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
 
 	for resp == nil {
@@ -121,6 +192,31 @@ func main() {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func initialPairResponse(tokenFile, pairAPI, pairingCode string) (*pairResponse, error) {
+	if strings.TrimSpace(pairingCode) != "" {
+		fmt.Fprintf(os.Stderr, "pairing with %s\n", pairAPI)
+		resp, err := pair(pairAPI, pairingCode)
+		if err == nil {
+			if saveErr := savePairResponse(tokenFile, resp); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "unable to save tunnel token: %v\n", saveErr)
+			}
+			fmt.Fprintln(os.Stderr, "pairing succeeded; saved tunnel token")
+			return resp, nil
+		}
+		fmt.Fprintf(os.Stderr, "pairing failed: %v\n", err)
+	}
+
+	resp, err := loadPairResponse(tokenFile)
+	if err == nil && strings.TrimSpace(resp.TunnelToken) != "" {
+		fmt.Fprintf(os.Stderr, "using saved tunnel token from %s\n", tokenFile)
+		return resp, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("unable to read saved tunnel token: %v", err)
+	}
+	return nil, nil
 }
 
 func loadPairResponse(path string) (*pairResponse, error) {
@@ -169,11 +265,13 @@ func runTunnel(resp *pairResponse, edgeURL, haBase string) error {
 	parsedConnect.RawQuery = query.Encode()
 
 	wsURL := toWebSocketURL(parsedConnect)
+	debugf("opening tunnel websocket to %s", redactURLToken(wsURL.String()))
 
 	parsedHaBase, err := url.Parse(haBase)
 	if err != nil {
 		return err
 	}
+	debugf("forwarding local Home Assistant requests to %s", parsedHaBase.Redacted())
 
 	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	conn, _, err := dialer.Dial(wsURL.String(), nil)
@@ -181,6 +279,7 @@ func runTunnel(resp *pairResponse, edgeURL, haBase string) error {
 		return err
 	}
 	defer conn.Close()
+	infof("tunnel connected")
 
 	runtime := &agentRuntime{
 		conn:       conn,
@@ -241,6 +340,7 @@ func (a *agentRuntime) readPump() error {
 		if err := a.conn.ReadJSON(&msg); err != nil {
 			return err
 		}
+		debugf("received tunnel message type=%s req=%s conn=%s path=%s stream=%t", msg.Type, msg.ReqID, msg.ConnID, msg.Path, msg.Stream)
 
 		switch msg.Type {
 		case "http_req":
@@ -275,6 +375,7 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 	targetURL := *a.haBaseURL
 	targetURL.Path = joinPath(a.haBaseURL.Path, msg.Path)
 	targetURL.RawQuery = msg.Query
+	debugf("http request start req=%s method=%s path=%s stream=%t", msg.ReqID, msg.Method, msg.Path, msg.Stream)
 
 	body, err := base64.RawStdEncoding.DecodeString(msg.Body)
 	if err != nil {
@@ -319,6 +420,7 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 		return
 	}
 	defer resp.Body.Close()
+	debugf("http upstream response req=%s status=%d path=%s", msg.ReqID, resp.StatusCode, msg.Path)
 
 	if msg.Stream {
 		a.streamHTTPResponse(msg.ReqID, resp)
@@ -338,6 +440,7 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 		Headers: cloneHeaders(resp.Header),
 		Body:    base64.RawStdEncoding.EncodeToString(responseBody),
 	})
+	debugf("http response sent req=%s status=%d bytes=%d", msg.ReqID, resp.StatusCode, len(responseBody))
 }
 
 func (a *agentRuntime) streamHTTPResponse(reqID string, resp *http.Response) {
@@ -356,6 +459,7 @@ func (a *agentRuntime) streamHTTPResponse(reqID string, resp *http.Response) {
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buffer[:n])
+			tracef("stream chunk req=%s bytes=%d", reqID, n)
 			if !a.sendMessage(tunnelMessage{
 				Type:  "http_chunk",
 				ReqID: reqID,
@@ -367,8 +471,10 @@ func (a *agentRuntime) streamHTTPResponse(reqID string, resp *http.Response) {
 		if readErr != nil {
 			if readErr == io.EOF {
 				a.sendMessage(tunnelMessage{Type: "http_end", ReqID: reqID})
+				debugf("stream ended req=%s", reqID)
 			} else {
 				a.sendMessage(tunnelMessage{Type: "http_end", ReqID: reqID, Error: readErr.Error()})
+				debugf("stream ended with error req=%s error=%v", reqID, readErr)
 			}
 			return
 		}
@@ -406,7 +512,7 @@ func (a *agentRuntime) handleWSOpen(msg tunnelMessage) {
 		a.sendMessage(tunnelMessage{Type: "ws_close", ConnID: msg.ConnID, Error: err.Error()})
 		return
 	}
-	fmt.Fprintf(os.Stderr, "upstream websocket opened path=%s\n", upstreamURL.Path)
+	debugf("upstream websocket opened conn=%s path=%s", msg.ConnID, upstreamURL.Path)
 
 	a.mu.Lock()
 	a.upstreamWS[msg.ConnID] = &upstreamWebSocket{conn: conn}
@@ -442,6 +548,7 @@ func (a *agentRuntime) handleWSData(msg tunnelMessage) {
 	upstream.writeMu.Unlock()
 	if err != nil {
 		a.handleWSClose(msg.ConnID)
+		debugf("upstream websocket write failed conn=%s error=%v", msg.ConnID, err)
 	}
 }
 
@@ -463,6 +570,7 @@ func (a *agentRuntime) readUpstreamWS(connID string, conn *websocket.Conn) {
 		}) {
 			return
 		}
+		tracef("upstream websocket frame conn=%s bytes=%d binary=%t", connID, len(data), messageType == websocket.BinaryMessage)
 	}
 }
 
@@ -473,6 +581,7 @@ func (a *agentRuntime) handleWSClose(connID string) {
 	a.mu.Unlock()
 	if upstream != nil {
 		_ = upstream.conn.Close()
+		debugf("upstream websocket closed conn=%s", connID)
 	}
 }
 

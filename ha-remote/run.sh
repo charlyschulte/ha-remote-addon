@@ -17,11 +17,17 @@ json_string() {
 }
 
 PAIRING_CODE="$(json_string pairing_code)"
+LOG_LEVEL="$(json_string log_level)"
+
+if [ -z "${LOG_LEVEL}" ]; then
+  LOG_LEVEL="info"
+fi
 
 echo "Starting HA Remote agent"
 echo "edge_url=configured"
 echo "pair_api_url=configured"
 echo "ha_base_url=local Home Assistant instance"
+echo "log_level=${LOG_LEVEL}"
 if [ -n "${PAIRING_CODE}" ]; then
   echo "pairing_code=configured"
 else
@@ -33,4 +39,5 @@ exec /usr/local/bin/agent \
   -edge-url "${EDGE_URL}" \
   -pair-api "${PAIR_API_URL}" \
   -ha-base-url "${HA_BASE_URL}" \
+  -log-level "${LOG_LEVEL}" \
   -token-file "/data/tunnel-token.json"
