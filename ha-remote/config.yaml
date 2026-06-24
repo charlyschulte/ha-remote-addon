@@ -1,0 +1,17 @@
+name: HA Remote
+version: "0.1.0"
+slug: ha_remote
+description: Secure outbound tunnel agent for Home Assistant remote access
+startup: services
+boot: auto
+init: false
+homeassistant_api: true
+host_network: false
+arch:
+  - amd64
+  - aarch64
+  - armv7
+options:
+  pairing_code: ""
+schema:
+  pairing_code: str
