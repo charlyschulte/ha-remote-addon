@@ -5,7 +5,7 @@ This repository contains the HA Remote add-on for Home Assistant.
 ## Install
 
 1. Open Home Assistant.
-2. Go to **Settings** -> **Add-ons** -> **Add-on Store**.
+2. Go to **Settings** -> **Apps**.
 3. Open the menu in the top right.
 4. Choose **Repositories**.
 5. Add this repository URL:
