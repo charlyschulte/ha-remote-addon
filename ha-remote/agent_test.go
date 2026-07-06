@@ -1,12 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestValidatedOriginalHost(t *testing.T) {
 	tests := []struct {
@@ -88,5 +96,53 @@ func TestHandleHTTPPreservesHostPathAndQuery(t *testing.T) {
 	response := <-runtime.send
 	if response.Status != http.StatusOK || response.Error != "" {
 		t.Fatalf("tunnel response = %+v", response)
+	}
+}
+
+func TestDoUpstreamRequestRetriesGETAfterEOF(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, io.EOF
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewBufferString("ok")),
+			Request:    request,
+		}, nil
+	})}
+	request, err := http.NewRequest(http.MethodGet, "http://homeassistant:8123/favicon.ico", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := doUpstreamRequest(client, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+}
+
+func TestDoUpstreamRequestDoesNotRetryPOSTAfterEOF(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, io.EOF
+	})}
+	request, err := http.NewRequest(http.MethodPost, "http://homeassistant:8123/api/services/test", bytes.NewBufferString("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := doUpstreamRequest(client, request); err == nil {
+		t.Fatal("expected EOF")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
 	}
 }

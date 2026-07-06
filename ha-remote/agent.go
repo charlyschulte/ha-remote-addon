@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -453,7 +454,7 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 
 	req.Host = validatedOriginalHost(originalHost, a.haBaseURL.Host)
 
-	resp, err := a.httpConn.Do(req)
+	resp, err := doUpstreamRequest(a.httpConn, req)
 	if err != nil {
 		a.replyError(msg.ReqID, fmt.Sprintf("upstream http failed: %v", err))
 		return
@@ -480,6 +481,33 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 		Body:    base64.RawStdEncoding.EncodeToString(responseBody),
 	})
 	debugf("http response sent req=%s status=%d bytes=%d", msg.ReqID, resp.StatusCode, len(responseBody))
+}
+
+func doUpstreamRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err == nil || !isRetryableUpstreamRequest(req, err) {
+		return resp, err
+	}
+
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		retry.Body, err = req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+	}
+	debugf("retrying upstream request after connection closed method=%s path=%s error=%v", req.Method, req.URL.Path, err)
+	return client.Do(retry)
+}
+
+func isRetryableUpstreamRequest(req *http.Request, err error) bool {
+	if req == nil || err == nil {
+		return false
+	}
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return false
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (a *agentRuntime) streamHTTPResponse(reqID string, resp *http.Response) {
