@@ -75,6 +75,8 @@ const (
 
 var currentLogLevel = logLevelInfo
 
+const originalHostHeader = "X-Haremote-Original-Host"
+
 var strippedHeaders = map[string]struct{}{
 	"x-forwarded-for":   {},
 	"x-forwarded-host":  {},
@@ -432,8 +434,12 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 		return
 	}
 
+	originalHost := firstHeaderValue(msg.Headers, originalHostHeader)
 	for key, values := range msg.Headers {
 		lower := strings.ToLower(key)
+		if lower == strings.ToLower(originalHostHeader) {
+			continue
+		}
 		if _, stripped := strippedHeaders[lower]; stripped {
 			continue
 		}
@@ -445,7 +451,7 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 		}
 	}
 
-	req.Host = a.haBaseURL.Host
+	req.Host = validatedOriginalHost(originalHost, a.haBaseURL.Host)
 
 	resp, err := a.httpConn.Do(req)
 	if err != nil {
@@ -520,6 +526,9 @@ func (a *agentRuntime) handleWSOpen(msg tunnelMessage) {
 	header := http.Header{}
 	for key, values := range msg.Headers {
 		lower := strings.ToLower(key)
+		if lower == strings.ToLower(originalHostHeader) {
+			continue
+		}
 		if _, stripped := strippedHeaders[lower]; stripped {
 			continue
 		}
@@ -672,6 +681,27 @@ func cloneHeaders(input http.Header) map[string][]string {
 		result[key] = copied
 	}
 	return result
+}
+
+func firstHeaderValue(headers map[string][]string, name string) string {
+	for key, values := range headers {
+		if !strings.EqualFold(key, name) || len(values) == 0 {
+			continue
+		}
+		return strings.TrimSpace(values[0])
+	}
+	return ""
+}
+
+func validatedOriginalHost(candidate, fallback string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" || strings.ContainsAny(candidate, "\r\n/\\") {
+		return fallback
+	}
+	if _, err := url.Parse("http://" + candidate); err != nil {
+		return fallback
+	}
+	return candidate
 }
 
 func isHopByHopHeader(lower string) bool {
