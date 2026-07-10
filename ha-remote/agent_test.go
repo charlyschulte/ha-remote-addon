@@ -71,7 +71,10 @@ func TestHandleHTTPPreservesHostPathAndQuery(t *testing.T) {
 		Path:   "/hacsfiles/ha-mammotion-assets/geojson.js",
 		Query:  "hacstag=10930090459773",
 		Headers: map[string][]string{
-			originalHostHeader: {"hadev.home.ctech.media"},
+			originalHostHeader:  {"hadev.home.ctech.media"},
+			originalProtoHeader: {"https"},
+			"X-Forwarded-Host":  {"spoofed.example"},
+			"X-Forwarded-Proto": {"javascript"},
 		},
 	})
 
@@ -89,6 +92,15 @@ func TestHandleHTTPPreservesHostPathAndQuery(t *testing.T) {
 		if request.Header.Get(originalHostHeader) != "" {
 			t.Fatalf("private tunnel header leaked upstream")
 		}
+		if request.Header.Get(originalProtoHeader) != "" {
+			t.Fatalf("private tunnel proto header leaked upstream")
+		}
+		if request.Header.Get("X-Forwarded-Host") != "hadev.home.ctech.media" {
+			t.Fatalf("X-Forwarded-Host = %q", request.Header.Get("X-Forwarded-Host"))
+		}
+		if request.Header.Get("X-Forwarded-Proto") != "https" {
+			t.Fatalf("X-Forwarded-Proto = %q", request.Header.Get("X-Forwarded-Proto"))
+		}
 	case <-time.After(time.Second):
 		t.Fatal("upstream request not received")
 	}
@@ -96,6 +108,24 @@ func TestHandleHTTPPreservesHostPathAndQuery(t *testing.T) {
 	response := <-runtime.send
 	if response.Status != http.StatusOK || response.Error != "" {
 		t.Fatalf("tunnel response = %+v", response)
+	}
+}
+
+func TestValidatedOriginalProto(t *testing.T) {
+	tests := []struct {
+		candidate string
+		want      string
+	}{
+		{candidate: "https", want: "https"},
+		{candidate: "HTTP", want: "http"},
+		{candidate: "javascript", want: "http"},
+		{candidate: "", want: "http"},
+	}
+
+	for _, tt := range tests {
+		if got := validatedOriginalProto(tt.candidate); got != tt.want {
+			t.Fatalf("validatedOriginalProto(%q) = %q, want %q", tt.candidate, got, tt.want)
+		}
 	}
 }
 

@@ -76,7 +76,10 @@ const (
 
 var currentLogLevel = logLevelInfo
 
-const originalHostHeader = "X-Haremote-Original-Host"
+const (
+	originalHostHeader  = "X-Haremote-Original-Host"
+	originalProtoHeader = "X-Haremote-Original-Proto"
+)
 
 var strippedHeaders = map[string]struct{}{
 	"x-forwarded-for":   {},
@@ -436,9 +439,11 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 	}
 
 	originalHost := firstHeaderValue(msg.Headers, originalHostHeader)
+	originalProto := validatedOriginalProto(firstHeaderValue(msg.Headers, originalProtoHeader))
 	for key, values := range msg.Headers {
 		lower := strings.ToLower(key)
-		if lower == strings.ToLower(originalHostHeader) {
+		if lower == strings.ToLower(originalHostHeader) ||
+			lower == strings.ToLower(originalProtoHeader) {
 			continue
 		}
 		if _, stripped := strippedHeaders[lower]; stripped {
@@ -452,7 +457,10 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 		}
 	}
 
-	req.Host = validatedOriginalHost(originalHost, a.haBaseURL.Host)
+	forwardedHost := validatedOriginalHost(originalHost, a.haBaseURL.Host)
+	req.Host = forwardedHost
+	req.Header.Set("X-Forwarded-Host", forwardedHost)
+	req.Header.Set("X-Forwarded-Proto", originalProto)
 
 	resp, err := doUpstreamRequest(a.httpConn, req)
 	if err != nil {
@@ -730,6 +738,14 @@ func validatedOriginalHost(candidate, fallback string) string {
 		return fallback
 	}
 	return candidate
+}
+
+func validatedOriginalProto(candidate string) string {
+	candidate = strings.TrimSpace(strings.ToLower(candidate))
+	if candidate == "http" || candidate == "https" {
+		return candidate
+	}
+	return "http"
 }
 
 func isHopByHopHeader(lower string) bool {
