@@ -1,5 +1,5 @@
 name: HA Remote
-version: "0.1.5"
+version: "0.1.8"
 slug: ha_remote
 description: Secure outbound tunnel agent for Home Assistant remote access
 startup: services
@@ -17,3 +17,6 @@ options:
 schema:
   pairing_code: str
   log_level: list(trace|debug|info|warning|error)
+  ha_host: str?
+  ha_port: str?
+  trusted_proxies_config: str?
