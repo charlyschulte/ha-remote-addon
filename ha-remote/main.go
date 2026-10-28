@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -50,11 +51,15 @@ func main() {
 	haBase := flag.String("ha-base-url", "http://homeassistant:8123", "Local Home Assistant base URL")
 	logLevelFlag := flag.String("log-level", "info", "Log level: trace, debug, info, warning, error")
 	tokenFile := flag.String("token-file", "/data/tunnel-token.json", "Persisted tunnel token file")
+	haPortCandidates := flag.String("ha-port-candidates", "", "Ports to re-check when Home Assistant refuses connections (set when the port was detected automatically)")
 	allowTargets := flag.Bool("allow-custom-targets", true, "Allow forwarding subdomains to other services in the local network")
 	flag.Parse()
 	currentLogLevel = parseLogLevel(*logLevelFlag)
 	go exitOnSignal()
 	allowCustomTargets = *allowTargets
+	if parsed, err := url.Parse(strings.TrimSpace(*haBase)); err == nil {
+		homeAssistant.configure(parsed, *haPortCandidates)
+	}
 	infof("agent version %s; custom targets %s", agentVersion, map[bool]string{true: "allowed", false: "disabled"}[allowCustomTargets])
 	infof("log level set to %s", normalizeLogLevel(*logLevelFlag))
 
@@ -238,7 +243,7 @@ func savePairResponse(path string, resp *pairResponse) error {
 
 // agentVersion is reported to the server so the dashboard can show outdated
 // add-ons. Keep it in sync with config.yaml.
-const agentVersion = "0.2.0"
+const agentVersion = "0.2.1"
 
 func agentCapabilities() string {
 	capabilities := []string{"flow"}
