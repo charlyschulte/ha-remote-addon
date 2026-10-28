@@ -1,0 +1,30 @@
+name: Test add-on
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ha-remote
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ha-remote/go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Check version is consistent
+        run: |
+          config_version=$(sed -n 's/^version: "\(.*\)"/\1/p' config.yaml | tr -d '\r')
+          code_version=$(sed -n 's/^const agentVersion = "\(.*\)"/\1/p' main.go)
+          echo "config.yaml=$config_version agent=$code_version"
+          test "$config_version" = "$code_version"
+      - name: Build image
+        run: docker build -t ha-remote-agent:ci .

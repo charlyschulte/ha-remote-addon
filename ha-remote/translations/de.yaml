@@ -1,0 +1,19 @@
+configuration:
+  pairing_code:
+    name: Pairing-Code
+    description: Code aus dem HA-Remote-Dashboard. Nur für die erste Verbindung oder nach erneutem Koppeln nötig.
+  log_level:
+    name: Log-Level
+    description: debug für Verbindungsdiagnose, trace für jeden einzelnen Frame.
+  allow_custom_targets:
+    name: Weiterleitung zu anderen Diensten erlauben
+    description: Erlaubt Subdomains, die im HA-Remote-Dashboard eingerichtet sind, auf andere Geräte in deinem Heimnetz weiterzuleiten (nur private Adressen). Der Zugriff auf Home Assistant funktioniert in beiden Fällen.
+  ha_host:
+    name: Home-Assistant-Host
+    description: Fortgeschritten. IP-Adresse oder Hostname von Home Assistant, ohne http:// und Port.
+  ha_port:
+    name: Home-Assistant-Port
+    description: Fortgeschritten. Wird automatisch erkannt (8123, dann 80).
+  trusted_proxies_config:
+    name: Beispiel für trusted_proxies
+    description: Nur zur Information.

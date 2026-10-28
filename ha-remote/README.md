@@ -6,6 +6,20 @@ This add-on is the local Home Assistant tunnel agent.
 
 - `pairing_code`: generated in the dashboard
 - `log_level`: `info` by default. Use `debug` for pairing/tunnel/request diagnostics or `trace` for per-frame/per-chunk logs.
+- `allow_custom_targets`: `true` by default. Allows subdomains configured in
+  the HA Remote dashboard to forward to other services in your local network
+  (see below). Set to `false` to only ever forward to Home Assistant.
+
+## Forwarding to other services
+
+Besides Home Assistant, a subdomain can forward to another device in your
+network, for example `nas.example.home.ctech.media` to
+`http://192.168.178.10:5000`. The forwarding is configured in the HA Remote
+dashboard. For safety the add-on only connects to private network addresses
+(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, IPv6 ULA);
+public addresses, loopback and link-local addresses are always refused.
+HTTPS targets with self-signed certificates are accepted because the traffic
+stays inside your network.
 
 The following settings are hidden by default. Enable **Show unused optional
 configuration options** in Home Assistant to display them:
