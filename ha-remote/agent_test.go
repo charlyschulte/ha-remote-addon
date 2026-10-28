@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -174,5 +175,104 @@ func TestDoUpstreamRequestDoesNotRetryPOSTAfterEOF(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestUpstreamClientDoesNotFollowRedirects(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/target", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("target body"))
+	}))
+	defer upstream.Close()
+
+	baseURL, _ := url.Parse(upstream.URL)
+	runtime := &agentRuntime{
+		haBaseURL: baseURL,
+		httpConn:  newUpstreamClient(),
+		send:      make(chan tunnelMessage, 1),
+		done:      make(chan struct{}),
+	}
+	runtime.handleHTTP(tunnelMessage{Type: "http_req", ReqID: "r", Method: http.MethodGet, Path: "/start"})
+
+	response := <-runtime.send
+	if response.Status != http.StatusFound {
+		t.Fatalf("status = %d, want 302 passed through to the browser", response.Status)
+	}
+	if got := response.Headers["Location"]; len(got) != 1 || got[0] != "/target" {
+		t.Fatalf("Location = %v", got)
+	}
+}
+
+func TestSetUpstreamPathKeepsEncodedSlashes(t *testing.T) {
+	base, _ := url.Parse("http://homeassistant:8123")
+	target := *base
+	setUpstreamPath(&target, base, "/api/media/a/b", "/api/media/a%2Fb")
+	if got := target.String(); got != "http://homeassistant:8123/api/media/a%2Fb" {
+		t.Fatalf("upstream URL = %q", got)
+	}
+
+	legacy := *base
+	setUpstreamPath(&legacy, base, "/lovelace/0", "")
+	if got := legacy.String(); got != "http://homeassistant:8123/lovelace/0" {
+		t.Fatalf("legacy upstream URL = %q", got)
+	}
+}
+
+func TestStreamingWaitsForFlowControlAcks(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 3*flowWindow)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer upstream.Close()
+
+	baseURL, _ := url.Parse(upstream.URL)
+	runtime := &agentRuntime{
+		haBaseURL: baseURL,
+		httpConn:  newUpstreamClient(),
+		send:      make(chan tunnelMessage, 1024),
+		done:      make(chan struct{}),
+	}
+	finished := make(chan struct{})
+	go func() {
+		runtime.handleHTTP(tunnelMessage{Type: "http_req", ReqID: "s", Method: http.MethodGet, Path: "/big.bin", Stream: true, Flow: true})
+		close(finished)
+	}()
+
+	// Without acks the agent must stop after roughly one window.
+	time.Sleep(300 * time.Millisecond)
+	sent := 0
+	for len(runtime.send) > 0 {
+		msg := <-runtime.send
+		if msg.Type == "http_chunk" {
+			decoded, _ := base64.RawStdEncoding.DecodeString(msg.Body)
+			sent += len(decoded)
+		}
+	}
+	if sent > flowWindow+64*1024 {
+		t.Fatalf("agent sent %d bytes without acks, window is %d", sent, flowWindow)
+	}
+
+	// Acknowledging everything lets the stream finish.
+	go func() {
+		for {
+			select {
+			case msg := <-runtime.send:
+				if msg.Type == "http_chunk" {
+					decoded, _ := base64.RawStdEncoding.DecodeString(msg.Body)
+					runtime.ackHTTP("s", int64(len(decoded)))
+				}
+			case <-finished:
+				return
+			}
+		}
+	}()
+	runtime.ackHTTP("s", int64(sent))
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not finish after acks")
 	}
 }
