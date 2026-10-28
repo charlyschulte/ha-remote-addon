@@ -98,6 +98,9 @@ func (a *agentRuntime) handleHTTP(msg tunnelMessage) {
 			return
 		}
 		warnf("%s request failed method=%s path=%s: %v", upstreamLabel(custom), msg.Method, msg.Path, err)
+		if !custom {
+			homeAssistant.noticeFailure(err)
+		}
 		a.replyError(msg.ReqID, fmt.Sprintf("upstream http failed: %v", err))
 		return
 	}

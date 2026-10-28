@@ -108,6 +108,9 @@ func targetWebSocketDialer() *websocket.Dialer {
 // Home Assistant by default, or the custom target from the route.
 func (a *agentRuntime) upstreamFor(target string) (*url.URL, *http.Client, bool, error) {
 	if target == "" {
+		if base := homeAssistant.base(); base != nil {
+			return base, a.httpConn, false, nil
+		}
 		return a.haBaseURL, a.httpConn, false, nil
 	}
 	parsed, err := parseTarget(target)
