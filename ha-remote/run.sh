@@ -25,9 +25,13 @@ PAIRING_CODE="$(json_string pairing_code)"
 LOG_LEVEL="$(json_string log_level)"
 HA_HOST="$(json_string ha_host)"
 HA_PORT="$(json_value ha_port)"
+ALLOW_CUSTOM_TARGETS="$(json_value allow_custom_targets)"
 
 if [ -z "${LOG_LEVEL}" ]; then
   LOG_LEVEL="info"
+fi
+if [ "${ALLOW_CUSTOM_TARGETS}" != "false" ]; then
+  ALLOW_CUSTOM_TARGETS="true"
 fi
 if [ -z "${HA_HOST}" ]; then
   HA_HOST="homeassistant"
@@ -73,6 +77,7 @@ echo "edge_url=configured"
 echo "pair_api_url=configured"
 echo "ha_base_url=${HA_BASE_URL}"
 echo "log_level=${LOG_LEVEL}"
+echo "allow_custom_targets=${ALLOW_CUSTOM_TARGETS}"
 echo "trusted_proxies example for Home Assistant configuration.yaml:"
 echo "http:"
 echo "  use_x_forwarded_for: true"
@@ -90,4 +95,5 @@ exec /usr/local/bin/agent \
   -pair-api "${PAIR_API_URL}" \
   -ha-base-url "${HA_BASE_URL}" \
   -log-level "${LOG_LEVEL}" \
+  -allow-custom-targets="${ALLOW_CUSTOM_TARGETS}" \
   -token-file "/data/tunnel-token.json"

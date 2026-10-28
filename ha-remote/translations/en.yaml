@@ -1,0 +1,19 @@
+configuration:
+  pairing_code:
+    name: Pairing code
+    description: Code from the HA Remote dashboard. Only needed for the first connection or after re-pairing.
+  log_level:
+    name: Log level
+    description: Use debug for connection diagnostics, trace for every frame.
+  allow_custom_targets:
+    name: Allow forwarding to other services
+    description: Lets subdomains configured in the HA Remote dashboard forward to other devices in your local network (private addresses only). Home Assistant access works either way.
+  ha_host:
+    name: Home Assistant host
+    description: Advanced. IP address or hostname of Home Assistant, without http:// and port.
+  ha_port:
+    name: Home Assistant port
+    description: Advanced. Detected automatically (8123, then 80).
+  trusted_proxies_config:
+    name: Trusted proxies example
+    description: Only informational.
