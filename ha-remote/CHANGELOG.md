@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- Waits up to 90 seconds for Home Assistant during startup instead of
+  guessing the port while Home Assistant is still booting.
+- If the port was detected automatically and Home Assistant refuses
+  connections, the add-on re-checks ports 8123 and 80 and switches to the
+  one that answers. A manually configured `ha_port` is never changed.
+
 ## 0.2.0
 
 - Pages with large responses (history, logbook, HACS, big dashboards) no

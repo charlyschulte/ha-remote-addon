@@ -60,15 +60,30 @@ if [ -n "${HA_PORT}" ]; then
     HA_PORT="8123"
   fi
   echo "ha_port=manual ${HA_PORT}"
-elif port_responds 8123; then
-  HA_PORT="8123"
-  echo "ha_port=automatic 8123"
-elif port_responds 80; then
-  HA_PORT="80"
-  echo "ha_port=automatic 80"
+  HA_PORT_CANDIDATES=""
 else
-  HA_PORT="8123"
-  echo "ha_port=automatic fallback 8123; Home Assistant did not answer on port 8123 or 80 during startup"
+  # The add-on may start before Home Assistant is up; wait up to 90s for
+  # either port instead of settling on a guess. The agent re-checks both
+  # ports later if Home Assistant refuses connections.
+  HA_PORT_CANDIDATES="8123,80"
+  HA_PORT=""
+  attempt=0
+  while [ -z "${HA_PORT}" ] && [ "${attempt}" -lt 30 ]; do
+    if port_responds 8123; then
+      HA_PORT="8123"
+    elif port_responds 80; then
+      HA_PORT="80"
+    else
+      attempt=$((attempt + 1))
+      sleep 3
+    fi
+  done
+  if [ -n "${HA_PORT}" ]; then
+    echo "ha_port=automatic ${HA_PORT}"
+  else
+    HA_PORT="8123"
+    echo "ha_port=automatic fallback 8123; Home Assistant did not answer on port 8123 or 80 yet, the agent keeps checking"
+  fi
 fi
 HA_BASE_URL="http://${HA_HOST}:${HA_PORT}"
 
@@ -96,4 +111,5 @@ exec /usr/local/bin/agent \
   -ha-base-url "${HA_BASE_URL}" \
   -log-level "${LOG_LEVEL}" \
   -allow-custom-targets="${ALLOW_CUSTOM_TARGETS}" \
+  -ha-port-candidates "${HA_PORT_CANDIDATES}" \
   -token-file "/data/tunnel-token.json"
